@@ -8,7 +8,7 @@ function App() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const res = await fetch("http://localhost:5000/generate_ad_copy", {
+   const res = await fetch(`${process.env.REACT_APP_API_URL}/generate_ad_copy`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ business, audience, goal }),
