@@ -1,0 +1,112 @@
+import os
+import firebase_admin
+from firebase_admin import credentials, firestore
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import openai
+from dotenv import load_dotenv
+
+# Load env vars from .env
+load_dotenv()
+
+app = Flask(__name__)
+CORS(app)
+
+# Firebase Init
+if not firebase_admin._apps:
+    cred = credentials.Certificate(os.environ['GOOGLE_APPLICATION_CREDENTIALS'])
+    firebase_admin.initialize_app(cred)
+db = firestore.client()
+
+# OpenAI Init
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# Home Route (optional)
+@app.route("/")
+def home():
+    return "Hello from Flask API!"
+
+# Generate AI Ad Copy (GPT)
+@app.route("/generate_ad_copy", methods=["POST"])
+def generate_ad_copy():
+    try:
+        data = request.get_json()
+        business = data.get("business", "")
+        audience = data.get("audience", "")
+        goal = data.get("goal", "")
+
+        if not (business and audience and goal):
+            return jsonify({"error": "Missing business, audience, or goal"}), 400
+
+        prompt = (
+            f"Write 3 headlines and 2 descriptions for an advertisement.\n"
+            f"Business/Product: {business}\n"
+            f"Target Audience: {audience}\n"
+            f"Ad Goal: {goal}\n\n"
+            f"Format:\n"
+            f"Headlines:\n1. ...\n2. ...\n3. ...\n\nDescriptions:\n1. ...\n2. ..."
+        )
+
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=300,
+        )
+
+        output = response.choices[0].message.content.strip()
+        headlines, descriptions = [], []
+        section = None
+
+        for line in output.splitlines():
+            line = line.strip()
+            if line.lower().startswith("headlines"):
+                section = "headlines"
+            elif line.lower().startswith("descriptions"):
+                section = "descriptions"
+            elif line[:2].isdigit() or line.startswith(("-", "*")):
+                if section == "headlines":
+                    headlines.append(line.split(".", 1)[-1].strip())
+                elif section == "descriptions":
+                    descriptions.append(line.split(".", 1)[-1].strip())
+
+        return jsonify({ "headlines": headlines, "descriptions": descriptions })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# Save Generated Campaign
+@app.route("/api/generate_campaign", methods=["POST"])
+def generate_campaign():
+    data = request.json
+    user_id = data.get("user_id")
+    title = data.get("title")
+    content = data.get("content")
+
+    if not (user_id and title and content):
+        return jsonify({"error": "user_id, title, and content required"}), 400
+
+    cmp = {
+        "title": title,
+        "content": content,
+        "createdAt": firestore.SERVER_TIMESTAMP,
+    }
+
+    db.collection("users").document(user_id).collection("campaigns").add(cmp)
+    return jsonify({"success": True})
+
+# Retrieve All Campaigns for a User
+@app.route("/api/my_campaigns", methods=["GET"])
+def my_campaigns():
+    user_id = request.args.get("user_id")
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
+    docs = db.collection("users").document(user_id).collection("campaigns") \
+        .order_by("createdAt", direction=firestore.Query.DESCENDING).stream()
+
+    campaigns = [{"id": d.id, **d.to_dict()} for d in docs]
+    return jsonify({"campaigns": campaigns})
+
+if __name__ == "__main__":
+    app.run(debug=True)
