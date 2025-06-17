@@ -1,50 +1,49 @@
 import os
-import openai
-from dotenv import load_dotenv
-import firebase_admin
-from firebase_admin import credentials, firestore
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import firebase_admin
+from firebase_admin import credentials, firestore
+from dotenv import load_dotenv
+import openai
 
 # Load environment variables
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Initialize Flask app
+# Flask setup
 app = Flask(__name__)
 CORS(app)
 
-# Firebase initialization
+# Firebase init
 if not firebase_admin._apps:
-    cred = credentials.Certificate(os.environ['GOOGLE_APPLICATION_CREDENTIALS'])
+    cred = credentials.Certificate(os.environ["GOOGLE_APPLICATION_CREDENTIALS"])
     firebase_admin.initialize_app(cred)
-
 db = firestore.client()
 
-# Home route
+# OpenAI init
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
 @app.route("/")
 def home():
-    return "Flask server running with SQLite and OpenAI v1!"
+    return "Flask server running with Firebase and OpenAI!"
 
-# Generate ad copy
+# Generate Ad Copy
 @app.route("/generate_ad_copy", methods=["POST"])
 def generate_ad_copy():
     try:
-        data = request.get_json()
-        business = data.get("business", "")
-        audience = data.get("audience", "")
-        goal = data.get("goal", "")
+        data = request.json
+        business = data.get("business")
+        audience = data.get("audience")
+        goal = data.get("goal")
 
         if not (business and audience and goal):
-            return jsonify({"error": "Missing business, audience, or goal"}), 400
+            return jsonify({"error": "Missing fields"}), 400
 
         prompt = (
             f"Write 3 headlines and 2 descriptions for an advertisement.\n"
             f"Business/Product: {business}\n"
             f"Target Audience: {audience}\n"
             f"Ad Goal: {goal}\n\n"
-            f"Format:\n"
-            f"Headlines:\n1. ...\n2. ...\n3. ...\n\nDescriptions:\n1. ...\n2. ..."
+            f"Format:\nHeadlines:\n1. ...\n2. ...\n3. ...\n\nDescriptions:\n1. ...\n2. ..."
         )
 
         response = openai.ChatCompletion.create(
@@ -54,28 +53,28 @@ def generate_ad_copy():
             max_tokens=300,
         )
 
-        output = response.choices[0].message.content.strip()
+        content = response.choices[0].message.content
         headlines, descriptions = [], []
         section = None
 
-        for line in output.splitlines():
+        for line in content.splitlines():
             line = line.strip()
-            if line.lower().startswith("headlines"):
+            if "headlines" in line.lower():
                 section = "headlines"
-            elif line.lower().startswith("descriptions"):
+            elif "descriptions" in line.lower():
                 section = "descriptions"
-            elif line[:2].isdigit() or line.startswith(("-", "*")):
+            elif line[:2].isdigit() or line.startswith("-") or line.startswith("*"):
+                cleaned = line.split(".", 1)[-1].strip()
                 if section == "headlines":
-                    headlines.append(line.split(".", 1)[-1].strip())
+                    headlines.append(cleaned)
                 elif section == "descriptions":
-                    descriptions.append(line.split(".", 1)[-1].strip())
+                    descriptions.append(cleaned)
 
         return jsonify({"headlines": headlines, "descriptions": descriptions})
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Save a generated campaign
+# Save a Campaign
 @app.route("/api/generate_campaign", methods=["POST"])
 def generate_campaign():
     data = request.json
@@ -83,19 +82,20 @@ def generate_campaign():
     title = data.get("title")
     content = data.get("content")
 
-    if not (user_id and title and content):
+    if not all([user_id, title, content]):
         return jsonify({"error": "user_id, title, and content required"}), 400
 
-    cmp = {
+    campaign = {
         "title": title,
         "content": content,
         "createdAt": firestore.SERVER_TIMESTAMP,
+        "favorite": False
     }
 
-    db.collection("users").document(user_id).collection("campaigns").add(cmp)
+    db.collection("users").document(user_id).collection("campaigns").add(campaign)
     return jsonify({"success": True})
 
-# Get all campaigns for a user
+# Get Campaigns
 @app.route("/api/my_campaigns", methods=["GET"])
 def my_campaigns():
     user_id = request.args.get("user_id")
@@ -105,17 +105,19 @@ def my_campaigns():
     docs = db.collection("users").document(user_id).collection("campaigns") \
         .order_by("createdAt", direction=firestore.Query.DESCENDING).stream()
 
-    campaigns = [{"id": d.id, **d.to_dict()} for d in docs]
+    campaigns = [{"id": doc.id, **doc.to_dict()} for doc in docs]
     return jsonify({"campaigns": campaigns})
 
-# Delete a campaign by ID
+# Delete Campaign
 @app.route("/api/delete_campaign/<user_id>/<campaign_id>", methods=["DELETE"])
 def delete_campaign(user_id, campaign_id):
     try:
-        db.collection("users").document(user_id).collection("campaigns").document(campaign_id).delete()
+        doc_ref = db.collection("users").document(user_id).collection("campaigns").document(campaign_id)
+        doc_ref.delete()
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# Run the server
 if __name__ == "__main__":
     app.run(debug=True)
