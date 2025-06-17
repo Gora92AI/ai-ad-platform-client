@@ -1,32 +1,32 @@
 import os
-from flask import Flask, request, jsonify
-from flask_cors import CORS
 import openai
+from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
-from dotenv import load_dotenv
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 
-# Load .env variables
+# Load environment variables
 load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
+# Initialize Flask app
 app = Flask(__name__)
 CORS(app)
 
-# Firebase Initialization
+# Firebase initialization
 if not firebase_admin._apps:
-    cred = credentials.Certificate(os.environ["GOOGLE_APPLICATION_CREDENTIALS"])
+    cred = credentials.Certificate(os.environ['GOOGLE_APPLICATION_CREDENTIALS'])
     firebase_admin.initialize_app(cred)
+
 db = firestore.client()
 
-# OpenAI Initialization
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-# Health check
+# Home route
 @app.route("/")
 def home():
     return "Flask server running with SQLite and OpenAI v1!"
 
-# Generate Ad Copy (OpenAI)
+# Generate ad copy
 @app.route("/generate_ad_copy", methods=["POST"])
 def generate_ad_copy():
     try:
@@ -65,13 +65,13 @@ def generate_ad_copy():
             elif line.lower().startswith("descriptions"):
                 section = "descriptions"
             elif line[:2].isdigit() or line.startswith(("-", "*")):
-                content = line.split(".", 1)[-1].strip()
                 if section == "headlines":
-                    headlines.append(content)
+                    headlines.append(line.split(".", 1)[-1].strip())
                 elif section == "descriptions":
-                    descriptions.append(content)
+                    descriptions.append(line.split(".", 1)[-1].strip())
 
         return jsonify({"headlines": headlines, "descriptions": descriptions})
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -102,20 +102,17 @@ def my_campaigns():
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
 
-    try:
-        docs = db.collection("users").document(user_id).collection("campaigns") \
-            .order_by("createdAt", direction=firestore.Query.DESCENDING).stream()
-        campaigns = [{"id": doc.id, **doc.to_dict()} for doc in docs]
-        return jsonify({"campaigns": campaigns})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    docs = db.collection("users").document(user_id).collection("campaigns") \
+        .order_by("createdAt", direction=firestore.Query.DESCENDING).stream()
 
-# Delete a campaign
+    campaigns = [{"id": d.id, **d.to_dict()} for d in docs]
+    return jsonify({"campaigns": campaigns})
+
+# Delete a campaign by ID
 @app.route("/api/delete_campaign/<user_id>/<campaign_id>", methods=["DELETE"])
 def delete_campaign(user_id, campaign_id):
     try:
-        doc_ref = db.collection("users").document(user_id).collection("campaigns").document(campaign_id)
-        doc_ref.delete()
+        db.collection("users").document(user_id).collection("campaigns").document(campaign_id).delete()
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
