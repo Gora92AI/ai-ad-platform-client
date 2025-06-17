@@ -33,6 +33,9 @@ def generate_ad_copy():
         business = data.get("business", "")
         audience = data.get("audience", "")
         goal = data.get("goal", "")
+	print("Received POST to /generate_ad_copy")
+	print("Data:", data)
+
 
         if not (business and audience and goal):
             return jsonify({"error": "Missing business, audience, or goal"}), 400
