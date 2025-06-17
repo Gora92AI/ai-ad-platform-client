@@ -6,27 +6,26 @@ from flask_cors import CORS
 import openai
 from dotenv import load_dotenv
 
-# Load env vars from .env
+# Load environment variables from .env
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
 
-# Firebase Init
+# Initialize Firebase
 if not firebase_admin._apps:
     cred = credentials.Certificate(os.environ['GOOGLE_APPLICATION_CREDENTIALS'])
     firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# OpenAI Init
+# Initialize OpenAI
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Home Route (optional)
 @app.route("/")
 def home():
     return "Hello from Flask API!"
 
-# Generate AI Ad Copy (GPT)
+# Generate ad copy using GPT
 @app.route("/generate_ad_copy", methods=["POST"])
 def generate_ad_copy():
     try:
@@ -70,12 +69,12 @@ def generate_ad_copy():
                 elif section == "descriptions":
                     descriptions.append(line.split(".", 1)[-1].strip())
 
-        return jsonify({ "headlines": headlines, "descriptions": descriptions })
+        return jsonify({"headlines": headlines, "descriptions": descriptions})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Save Generated Campaign
+# Save a generated campaign
 @app.route("/api/generate_campaign", methods=["POST"])
 def generate_campaign():
     data = request.json
@@ -95,18 +94,30 @@ def generate_campaign():
     db.collection("users").document(user_id).collection("campaigns").add(cmp)
     return jsonify({"success": True})
 
-# Retrieve All Campaigns for a User
+# Get all campaigns for a user
 @app.route("/api/my_campaigns", methods=["GET"])
 def my_campaigns():
     user_id = request.args.get("user_id")
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
 
-    docs = db.collection("users").document(user_id).collection("campaigns") \
-        .order_by("createdAt", direction=firestore.Query.DESCENDING).stream()
+    try:
+        docs = db.collection("users").document(user_id).collection("campaigns") \
+            .order_by("createdAt", direction=firestore.Query.DESCENDING).stream()
 
-    campaigns = [{"id": d.id, **d.to_dict()} for d in docs]
-    return jsonify({"campaigns": campaigns})
+        campaigns = [{"id": d.id, **d.to_dict()} for d in docs]
+        return jsonify({"campaigns": campaigns})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# Delete a campaign for a user
+@app.route("/api/delete_campaign/<user_id>/<doc_id>", methods=["DELETE"])
+def delete_campaign(user_id, doc_id):
+    try:
+        db.collection("users").document(user_id).collection("campaigns").document(doc_id).delete()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(debug=True)
